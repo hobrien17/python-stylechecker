@@ -207,8 +207,9 @@ def main():
         global file
         file = content.split("\n")
         tree = ast.parse(content)
-        visitor = GenericVisitor()
-        visitor.visit(tree)
+        #visitor = GenericVisitor()
+        #visitor.visit(tree)
+
 
 if __name__ == "__main__":
     main()
