@@ -1,6 +1,6 @@
 import tokenize
 from io import BytesIO
-
+import re
 
 def split_list(lst, delimiter):
     result = []
@@ -15,33 +15,64 @@ def split_list(lst, delimiter):
     return result
 
 
-def check_lines_2(iterator):
-    indent = 0
+class LineChecker:
 
-    all_toks = []
-    for tok in iterator:
-        all_toks.append(tok)
+    def __init__(self, tokens):
+        self._indent = 0
+        self._next_indent = 0
+        self._top = (True, True, True)
+        self._iterator = tokens
 
-    lines = split_list(all_toks, tokenize.NEWLINE)
+    def run(self):
+        all_toks = []
+        for tok in self._iterator:
+            all_toks.append(tok)
 
-    for lno, line in enumerate(lines):
-        if len(line) == 0 or all([i.type in (tokenize.NL, tokenize.ENDMARKER) for i in line]):
-            continue  # blank line
+        lines = split_list(all_toks, tokenize.NEWLINE)
 
-        if line[0].type in (tokenize.INDENT, tokenize.DEDENT):
-            indent = line[1].start[1]
+        for lno, line in enumerate(lines):
+            if len(line) == 0 or all([i.type in (tokenize.NL, tokenize.ENDMARKER) for i in line]):
+                continue  # blank line
 
-        if lno + 1 < len(lines) and len(lines[lno + 1]) > 0 and \
-                lines[lno + 1][0].type in (tokenize.INDENT, tokenize.DEDENT):
-            next_indent = lines[lno + 1][1].start[1]
+            if line[0].type in (tokenize.INDENT, tokenize.DEDENT):
+                self._indent = line[1].start[1]
+
+            if lno + 1 < len(lines) and len(lines[lno + 1]) > 0 and \
+                            lines[lno + 1][0].type in (tokenize.INDENT, tokenize.DEDENT):
+                self._next_indent = lines[lno + 1][1].start[1]
+            else:
+                self._next_indent = self._indent
+
+            subline = split_list(line, tokenize.NL)
+            self.check_line(subline)
+
+    def check_import(self, tokens):
+        if re.match(r'import (.+), (.+)', tokens[0].line):
+            print("Imports should be on separate lines")
+        elif re.match(r'from __future__ import (.+)', tokens[0].line):
+            if not all(self._top):
+                print("Future import should be at very top of file")
+        elif re.match(r'(__all__)|(__author__)|(__version__)(.+)', tokens[0].line):
+            if not all(self._top[1:]):
+                print("Module level dunders should be at top of file, before non-future imports")
+            self._top = (False, True, True)
+        elif re.match(r'import (.+)', tokens[0].line) or re.match(r'from (.+) import (.+)', tokens[0].line):
+            if not self._top[2]:
+                print("Imports should be at the top of the file, after future imports and module level dunders")
+            self._top = (False, False, True)
         else:
-            next_indent = indent
+            self._top = (False, False, False)
 
-        subline = split_list(line, tokenize.NL)
+    def check_line(self, subline):
         opens = []
         hanging = False
 
         for sno, tokens in enumerate(subline):
+            if len(tokens) == 0 or all([i.type in (tokenize.INDENT, tokenize.DEDENT, tokenize.STRING,
+                                                   tokenize.COMMENT) for i in tokens]):
+                continue  # blank line or comment
+            self.check_import(tokens)
+
             for tno, token in enumerate(tokens):
                 if token.type == tokenize.OP and token.string in ("(", "["):
                     opens.append(token.end[1])
@@ -49,7 +80,7 @@ def check_lines_2(iterator):
                         hanging = True
                 elif token.type == tokenize.OP and token.string in (")", "]"):
                     if len(tokens) == 1:
-                        if hanging and token.start[1] != indent and token.start[1] != next_indent + 4:
+                        if hanging and token.start[1] != self._indent and token.start[1] != self._next_indent + 4:
                             print("Bad indentation 3: Closing bracket misaligned")
                         elif token.start[1] != opens[-1]:
                             print("Bad indentation 4: Closing bracket misaligned")
@@ -59,7 +90,7 @@ def check_lines_2(iterator):
 
                 if sno != 0 and tno == 0:
                     if hanging:
-                        if token.start[1] != next_indent + 4:
+                        if token.start[1] != self._next_indent + 4:
                             print("Bad indentation 1: Misalign for hanging indent")
                     else:
                         if len(opens) > 0 and token.start[1] != opens[-1]:
@@ -71,7 +102,8 @@ def main():
         content = f.read()
         tokens = tokenize.tokenize(BytesIO(content.encode('utf-8')).readline)
         next(tokens) # remove encoding token
-        check_lines_2(tokens)
+        checker = LineChecker(tokens)
+        checker.run()
 
 if __name__ == "__main__":
     main()
